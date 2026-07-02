@@ -755,6 +755,7 @@ function Styles() {
       .input-textarea{resize:none;line-height:1.6;font-size:13px;padding:0 8px;}
       .output-goal{background:rgba(124,58,237,.12);color:#A78BFA;font-size:11px;padding:3px 9px;border-radius:999px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
       .hcard-goal{color:var(--fog);font-size:11px;}
+      @media(max-width:600px){
         .auth-wrap{grid-template-columns:1fr;}
         .auth-left{display:none;}
         .main-grid{grid-template-columns:1fr;}
