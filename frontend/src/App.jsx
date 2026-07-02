@@ -1,46 +1,42 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
-  Mail, Lock, User, Eye, EyeOff, Upload, Zap, CheckCircle2,
-  XCircle, Clock, ChevronDown, LogOut, X, Copy, Check,
-  TrendingUp, AlertCircle, Sparkles, RotateCcw, Camera,
-  Building2, Tag, ChevronRight, Loader2,
+  Mail, Lock, User, Eye, EyeOff, Upload, Zap,
+  CheckCircle, XCircle, Clock, ChevronDown, LogOut,
+  X, Copy, Check, AlertCircle, Sparkles, RotateCcw,
+  Camera, Building2, Tag, ChevronRight, Loader2, History, Send,
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
-   Config
+   API config
 --------------------------------------------------------------- */
 const API = import.meta.env.VITE_API_URL || "http://localhost:5001";
 
 /* ---------------------------------------------------------------
-   API helpers
+   Token helpers
 --------------------------------------------------------------- */
-const getToken  = ()    => localStorage.getItem("pf_access");
-const getRToken = ()    => localStorage.getItem("pf_refresh");
-const storeTokens = (a, r) => { localStorage.setItem("pf_access", a); if (r) localStorage.setItem("pf_refresh", r); };
-const clearTokens = ()  => { localStorage.removeItem("pf_access"); localStorage.removeItem("pf_refresh"); };
+const getToken  = ()       => localStorage.getItem("pf_access");
+const getRToken = ()       => localStorage.getItem("pf_refresh");
+const save      = (a, r)   => { localStorage.setItem("pf_access", a); if (r) localStorage.setItem("pf_refresh", r); };
+const clear     = ()       => { localStorage.removeItem("pf_access"); localStorage.removeItem("pf_refresh"); };
 
 async function apiFetch(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
-  const isForm  = opts.body instanceof FormData;
-  if (!isForm) headers["Content-Type"] = "application/json";
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
+  if (!(opts.body instanceof FormData)) headers["Content-Type"] = "application/json";
+  const t = getToken();
+  if (t) headers["Authorization"] = `Bearer ${t}`;
   let res = await fetch(`${API}${path}`, { ...opts, headers });
-
   if (res.status === 401) {
     const rt = getRToken();
     if (rt) {
       const rr = await fetch(`${API}/api/auth/refresh`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${rt}`, "Content-Type": "application/json" },
+        method: "POST", headers: { Authorization: `Bearer ${rt}`, "Content-Type": "application/json" },
       });
       if (rr.ok) {
         const { access_token } = await rr.json();
-        storeTokens(access_token, null);
+        save(access_token, null);
         headers["Authorization"] = `Bearer ${access_token}`;
         res = await fetch(`${API}${path}`, { ...opts, headers });
-      } else { clearTokens(); }
+      } else clear();
     }
   }
   return res;
@@ -49,121 +45,111 @@ async function apiFetch(path, opts = {}) {
 /* ---------------------------------------------------------------
    Root
 --------------------------------------------------------------- */
-export default function PitchForge() {
+export default function App() {
   const [screen,  setScreen]  = useState("auth");
   const [account, setAccount] = useState(null);
 
   useEffect(() => {
-    const t = getToken();
-    if (!t) return;
+    if (!getToken()) return;
     apiFetch("/api/me").then(async r => {
-      if (r.ok) { const { user } = await r.json(); setAccount(user); setScreen("tool"); }
-      else clearTokens();
-    }).catch(() => clearTokens());
+      if (r.ok) { const d = await r.json(); setAccount(d.user); setScreen("tool"); }
+      else clear();
+    }).catch(clear);
   }, []);
 
-  function onAuth(user, access, refresh) {
-    storeTokens(access, refresh);
-    setAccount(user);
-    setScreen("tool");
-  }
-
-  function onLogout() { clearTokens(); setAccount(null); setScreen("auth"); }
-
   return (
-    <div className="pf-root">
+    <div className="root">
       <Styles />
-      {screen === "auth" && <AuthScreen onAuth={onAuth} />}
+      {screen === "auth" && (
+        <AuthScreen onSuccess={(user, a, r) => { save(a, r); setAccount(user); setScreen("tool"); }} />
+      )}
       {screen === "tool" && account && (
-        <ToolScreen account={account} setAccount={setAccount} onLogout={onLogout} />
+        <ToolScreen
+          account={account}
+          setAccount={setAccount}
+          onLogout={() => { clear(); setAccount(null); setScreen("auth"); }}
+        />
       )}
     </div>
   );
 }
 
 /* ---------------------------------------------------------------
-   Auth Screen
+   Auth
 --------------------------------------------------------------- */
-function AuthScreen({ onAuth }) {
-  const [mode,     setMode]    = useState("signup");
-  const [email,    setEmail]   = useState("");
-  const [username, setUname]   = useState("");
-  const [password, setPass]    = useState("");
-  const [showPw,   setShowPw]  = useState(false);
-  const [errors,   setErrors]  = useState({});
-  const [apiErr,   setApiErr]  = useState("");
-  const [loading,  setLoading] = useState(false);
+function AuthScreen({ onSuccess }) {
+  const [mode,    setMode]   = useState("signup");
+  const [email,   setEmail]  = useState("");
+  const [uname,   setUname]  = useState("");
+  const [pass,    setPass]   = useState("");
+  const [showPw,  setShowPw] = useState(false);
+  const [errs,    setErrs]   = useState({});
+  const [apiErr,  setApiErr] = useState("");
+  const [loading, setLoad]   = useState(false);
 
   async function submit(e) {
     e.preventDefault();
     setApiErr("");
-    const errs = {};
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Enter a valid email.";
-    if (mode === "signup" && !/^[a-zA-Z0-9_]{3,20}$/.test(username)) errs.username = "3–20 chars: letters, numbers, underscore.";
-    if (password.length < 6) errs.password = "At least 6 characters.";
-    setErrors(errs);
-    if (Object.keys(errs).length) return;
-
-    setLoading(true);
+    const v = {};
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) v.email = "Enter a valid email.";
+    if (mode === "signup" && !/^[a-zA-Z0-9_]{3,20}$/.test(uname)) v.username = "3–20 chars, letters/numbers/underscore.";
+    if (pass.length < 6) v.password = "At least 6 characters.";
+    setErrs(v);
+    if (Object.keys(v).length) return;
+    setLoad(true);
     try {
-      const endpoint = mode === "signup" ? "/api/auth/register" : "/api/auth/login";
-      const body     = mode === "signup" ? { email, username, password } : { email, password };
-      const res      = await fetch(`${API}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data     = await res.json();
-      if (!res.ok) { data.errors ? setErrors(data.errors) : setApiErr(data.error || "Something went wrong."); return; }
-      onAuth(data.user, data.access_token, data.refresh_token);
-    } catch { setApiErr("Cannot reach the server. Is it running?"); }
-    finally   { setLoading(false); }
+      const res  = await fetch(`${API}/api/auth/${mode === "signup" ? "register" : "login"}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mode === "signup" ? { email, username: uname, password: pass } : { email, password: pass }),
+      });
+      const data = await res.json();
+      if (!res.ok) { data.errors ? setErrs(data.errors) : setApiErr(data.error || "Something went wrong."); return; }
+      onSuccess(data.user, data.access_token, data.refresh_token);
+    } catch { setApiErr("Cannot reach the server. Is the backend running?"); }
+    finally   { setLoad(false); }
   }
 
   return (
-    <div className="pf-auth">
-      {/* Left brand panel */}
-      <div className="pf-auth-left">
-        <div className="pf-auth-logo">
-          <Camera size={20} /> PitchForge
+    <div className="auth-wrap">
+      {/* Left panel */}
+      <div className="auth-left">
+        <div className="auth-logo"><Camera size={18} /> PitchForge</div>
+        <h1 className="auth-title">Turn any Instagram into a <span className="violet">signed client.</span></h1>
+        <p className="auth-sub">Drop in their profile screenshot and two posts. PitchForge reads their account, writes a personalised pitch, and gets smarter with every win and loss.</p>
+        <div className="auth-bullets">
+          <div className="bullet"><CheckCircle size={13} color="#10B981" /> Spots real strengths and one thing to fix</div>
+          <div className="bullet"><CheckCircle size={13} color="#10B981" /> Offers a free post to open the door</div>
+          <div className="bullet"><CheckCircle size={13} color="#10B981" /> Learns from your results automatically</div>
         </div>
-        <div className="pf-auth-hero">
-          <h1 className="pf-display">Turn any Instagram into a <span className="pf-violet">signed client.</span></h1>
-          <p className="pf-auth-sub">Drop in their profile screenshot and two posts. PitchForge reads their account and writes a personalised outreach message that actually gets replies — then learns from every win and loss to get sharper over time.</p>
-        </div>
-        <div className="pf-auth-pills">
-          <div className="pf-pill"><CheckCircle2 size={13} color="#10B981" /> Spots real strengths and weaknesses</div>
-          <div className="pf-pill"><CheckCircle2 size={13} color="#10B981" /> Offers a free post to open the door</div>
-          <div className="pf-pill"><CheckCircle2 size={13} color="#10B981" /> Gets smarter with every campaign</div>
-        </div>
-        <div className="pf-auth-orbit">
-          <div className="pf-orbit-ring pf-orbit-1" />
-          <div className="pf-orbit-ring pf-orbit-2" />
-          <div className="pf-orbit-ring pf-orbit-3" />
-          <div className="pf-orbit-core"><Camera size={22} /></div>
-          <div className="pf-orbit-dot pf-od-1"><Zap size={10} /></div>
-          <div className="pf-orbit-dot pf-od-2"><TrendingUp size={10} /></div>
-          <div className="pf-orbit-dot pf-od-3"><Sparkles size={10} /></div>
+        {/* Decorative orbiting rings */}
+        <div className="orbit-stage">
+          <div className="ring ring-1" /><div className="ring ring-2" /><div className="ring ring-3" />
+          <div className="orbit-core"><Camera size={20} /></div>
+          <div className="orbit-dot od-1"><Zap size={9}/></div>
+          <div className="orbit-dot od-2"><Send size={9}/></div>
+          <div className="orbit-dot od-3"><Sparkles size={9}/></div>
         </div>
       </div>
 
-      {/* Right auth card */}
-      <div className="pf-auth-right">
-        <div className="pf-auth-card">
-          <div className="pf-tabs">
-            <button className={"pf-tab"+(mode==="signup"?" pf-tab-on":"")} onClick={()=>setMode("signup")} type="button">Sign up</button>
-            <button className={"pf-tab"+(mode==="login" ?" pf-tab-on":"")} onClick={()=>setMode("login")}  type="button">Log in</button>
+      {/* Right card */}
+      <div className="auth-right">
+        <div className="auth-card">
+          <div className="tabs">
+            <button className={"tab"+(mode==="signup"?" tab-on":"")} onClick={()=>setMode("signup")} type="button">Sign up</button>
+            <button className={"tab"+(mode==="login" ?" tab-on":"")} onClick={()=>setMode("login")}  type="button">Log in</button>
           </div>
-
-          {apiErr && <div className="pf-banner pf-banner-err"><AlertCircle size={14}/> {apiErr}</div>}
-
-          <form onSubmit={submit} className="pf-form" noValidate>
-            <AuthField label="Email"    icon={<Mail size={15}/>} type="email"    value={email}    onChange={setEmail}   error={errors.email}    placeholder="you@agency.com" autoComplete="email"/>
-            {mode === "signup" && <AuthField label="Username" icon={<User size={15}/>}                      value={username} onChange={setUname}   error={errors.username} placeholder="your handle"     autoComplete="username"/>}
-            <AuthField label="Password" icon={<Lock size={15}/>} type={showPw?"text":"password"}  value={password} onChange={setPass}    error={errors.password} placeholder="••••••••"    autoComplete={mode==="signup"?"new-password":"current-password"}
-              suffix={<button type="button" className="pf-eye" onClick={()=>setShowPw(v=>!v)}>{showPw?<EyeOff size={14}/>:<Eye size={14}/>}</button>}
+          {apiErr && <div className="banner err-banner"><AlertCircle size={13}/> {apiErr}</div>}
+          <form onSubmit={submit} className="form" noValidate>
+            <Field label="Email"    icon={<Mail size={14}/>} type="email"    value={email} onChange={setEmail} error={errs.email}    placeholder="you@agency.com"/>
+            {mode === "signup" && <Field label="Username" icon={<User size={14}/>}              value={uname}  onChange={setUname} error={errs.username} placeholder="your handle"/>}
+            <Field label="Password" icon={<Lock size={14}/>} type={showPw?"text":"password"} value={pass}   onChange={setPass}   error={errs.password} placeholder="••••••••"
+              suffix={<button type="button" className="eye-btn" onClick={()=>setShowPw(v=>!v)}>{showPw?<EyeOff size={13}/>:<Eye size={13}/>}</button>}
             />
-            <button type="submit" className="pf-btn pf-btn-primary" disabled={loading}>
-              {loading ? <Loader2 size={15} className="pf-spin"/> : <Zap size={15}/>}
+            <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
+              {loading ? <Loader2 size={14} className="spin"/> : <Zap size={14}/>}
               {loading ? "Please wait…" : mode==="signup" ? "Create account" : "Log in"}
             </button>
-            <p className="pf-fine">{mode==="signup" ? "Free forever. No credit card." : "Welcome back."}</p>
+            <p className="fine">{mode==="signup" ? "Free forever. No credit card." : "Welcome back."}</p>
           </form>
         </div>
       </div>
@@ -171,144 +157,138 @@ function AuthScreen({ onAuth }) {
   );
 }
 
-function AuthField({ label, icon, error, suffix, ...rest }) {
+function Field({ label, icon, error, suffix, ...rest }) {
   return (
-    <label className="pf-field">
-      <span className="pf-field-label">{label}</span>
-      <div className={"pf-field-wrap"+(error?" pf-field-err":"")}>
-        <span className="pf-field-icon">{icon}</span>
-        <input className="pf-input" {...rest} onChange={e=>rest.onChange(e.target.value)} value={rest.value}/>
+    <label className="field">
+      <span className="field-label">{label}</span>
+      <div className={"field-wrap"+(error?" field-err":"")}>
+        <span className="field-icon">{icon}</span>
+        <input className="input" {...rest} onChange={e=>rest.onChange(e.target.value)} value={rest.value}/>
         {suffix}
       </div>
-      {error && <span className="pf-err-msg"><AlertCircle size={11}/> {error}</span>}
+      {error && <span className="err-msg"><AlertCircle size={11}/> {error}</span>}
     </label>
   );
 }
 
 /* ---------------------------------------------------------------
-   Tool Screen
+   Tool screen
 --------------------------------------------------------------- */
 function ToolScreen({ account, setAccount, onLogout }) {
-  const [menuOpen,    setMenuOpen]    = useState(false);
-  const [messages,    setMessages]    = useState([]);
-  const [generating,  setGenerating]  = useState(false);
-  const [generated,   setGenerated]   = useState(null);  // latest generated message
-  const [apiErr,      setApiErr]      = useState("");
-  const [tab,         setTab]         = useState("generate"); // 'generate' | 'history'
-  const [copied,      setCopied]      = useState(false);
+  const [tab,        setTab]        = useState("generate");
+  const [menuOpen,   setMenuOpen]   = useState(false);
+  const [messages,   setMessages]   = useState([]);
+  const [generating, setGenerating] = useState(false);
+  const [current,    setCurrent]    = useState(null);
+  const [apiErr,     setApiErr]     = useState("");
+  const [copied,     setCopied]     = useState(false);
+  const [displayTxt, setDisplayTxt] = useState("");
+  const [typing,     setTyping]     = useState(false);
 
-  // Form state
-  const [bizName,   setBizName]   = useState("");
-  const [bizField,  setBizField]  = useState("");
-  const [imgProfile,setImgProfile]= useState(null);
-  const [imgPost1,  setImgPost1]  = useState(null);
-  const [imgPost2,  setImgPost2]  = useState(null);
+  // Form
+  const [bizName,     setBizName]     = useState("");
+  const [bizField,    setBizField]    = useState("");
+  const [customGoal,  setCustomGoal]  = useState("");
+  const [imgP,        setImgP]        = useState(null);
+  const [img1,        setImg1]        = useState(null);
+  const [img2,        setImg2]        = useState(null);
+  const refP = useRef(); const ref1 = useRef(); const ref2 = useRef();
 
-  // Typewriter state
-  const [displayText, setDisplayText] = useState("");
-  const [typing,      setTyping]      = useState(false);
+  const stats = account.stats || {};
 
-  const profileRef = useRef(); const post1Ref = useRef(); const post2Ref = useRef();
-
-  // Load history on mount
   useEffect(() => { loadMessages(); }, []);
 
   async function loadMessages() {
-    const res = await apiFetch("/api/messages");
-    if (res.ok) { const d = await res.json(); setMessages(d.messages); }
+    const r = await apiFetch("/api/messages");
+    if (r.ok) { const d = await r.json(); setMessages(d.messages); }
   }
 
-  // Typewriter effect
+  // Typewriter
   useEffect(() => {
-    if (!generated) return;
-    setDisplayText("");
+    if (!current) return;
+    setDisplayTxt("");
     setTyping(true);
-    const text = generated.generated_text;
+    const text = current.generated_text;
     let i = 0;
-    const interval = setInterval(() => {
-      setDisplayText(text.slice(0, i + 1));
+    const iv = setInterval(() => {
       i++;
-      if (i >= text.length) { clearInterval(interval); setTyping(false); }
-    }, 18);
-    return () => clearInterval(interval);
-  }, [generated]);
+      setDisplayTxt(text.slice(0, i));
+      if (i >= text.length) { clearInterval(iv); setTyping(false); }
+    }, 16);
+    return () => clearInterval(iv);
+  }, [current]);
 
-  async function handleGenerate(e) {
+  async function generate(e) {
     e.preventDefault();
     setApiErr("");
-    if (!imgProfile) { setApiErr("Upload at least the Instagram profile screenshot."); return; }
+    if (!imgP)            { setApiErr("Upload at least the profile screenshot."); return; }
     if (!bizName.trim())  { setApiErr("Enter the business name."); return; }
-    if (!bizField.trim()) { setApiErr("Enter the business field / industry."); return; }
+    if (!bizField.trim()) { setApiErr("Enter the business field."); return; }
 
     const form = new FormData();
     form.append("business_name",  bizName.trim());
     form.append("business_field", bizField.trim());
-    form.append("image_profile",  imgProfile);
-    if (imgPost1) form.append("image_post1", imgPost1);
-    if (imgPost2) form.append("image_post2", imgPost2);
+    if (customGoal.trim()) form.append("custom_goal", customGoal.trim());
+    form.append("image_profile",  imgP);
+    if (img1) form.append("image_post1", img1);
+    if (img2) form.append("image_post2", img2);
 
     setGenerating(true);
     try {
       const res  = await apiFetch("/api/generate", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) { setApiErr(data.error || "Generation failed."); return; }
-      setGenerated(data.message);
+      setCurrent(data.message);
       setAccount(data.user);
       setMessages(prev => [data.message, ...prev]);
-      setTab("generate");
     } catch { setApiErr("Cannot reach the server."); }
     finally   { setGenerating(false); }
   }
 
-  async function setOutcome(msgId, outcome, note = "") {
+  async function markOutcome(msgId, outcome, note = "") {
     const res  = await apiFetch(`/api/messages/${msgId}/outcome`, {
-      method: "POST",
-      body:   JSON.stringify({ outcome, note }),
+      method: "POST", body: JSON.stringify({ outcome, note }),
     });
     if (res.ok) {
-      const data = await res.json();
-      setMessages(prev => prev.map(m => m.id === msgId ? data.message : m));
-      setAccount(data.user);
-      if (generated?.id === msgId) setGenerated(data.message);
+      const d = await res.json();
+      setMessages(prev => prev.map(m => m.id === msgId ? d.message : m));
+      setAccount(d.user);
+      if (current?.id === msgId) setCurrent(d.message);
     }
   }
 
-  function copyText() {
-    if (!generated) return;
-    navigator.clipboard.writeText(generated.generated_text);
+  function copyMsg() {
+    if (!current) return;
+    navigator.clipboard.writeText(current.generated_text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
-  function reset() {
-    setGenerated(null); setDisplayText(""); setImgProfile(null);
-    setImgPost1(null); setImgPost2(null); setBizName(""); setBizField(""); setApiErr("");
+  function resetForm() {
+    setCurrent(null); setDisplayTxt(""); setImgP(null);
+    setImg1(null); setImg2(null); setBizName(""); setBizField(""); setCustomGoal(""); setApiErr("");
   }
 
-  const stats = account.stats || {};
-
   return (
-    <div className="pf-tool">
-      {/* Topbar */}
-      <header className="pf-topbar">
-        <div className="pf-topbar-logo"><Camera size={16}/> PitchForge</div>
-        <div className="pf-topbar-right">
-          {/* Stats pills */}
-          <div className="pf-stat-pill pf-stat-s"><CheckCircle2 size={12}/> {stats.successes||0} won</div>
-          <div className="pf-stat-pill pf-stat-f"><XCircle      size={12}/> {stats.failures ||0} lost</div>
-          <div className="pf-stat-pill pf-stat-p"><Clock        size={12}/> {stats.pending  ||0} pending</div>
-          {/* Account menu */}
-          <div className="pf-acct-wrap">
-            <button className="pf-avatar" onClick={()=>setMenuOpen(v=>!v)} type="button">
-              {account.username[0].toUpperCase()} <ChevronDown size={13}/>
+    <div className="tool">
+      {/* Top bar */}
+      <header className="topbar">
+        <div className="topbar-logo"><Camera size={15}/> PitchForge</div>
+        <div className="topbar-right">
+          <div className="stat-pill stat-s"><CheckCircle size={11}/> {stats.successes||0} won</div>
+          <div className="stat-pill stat-f"><XCircle     size={11}/> {stats.failures||0}  lost</div>
+          <div className="stat-pill stat-p"><Clock       size={11}/> {stats.pending||0}   pending</div>
+          <div className="acct-wrap">
+            <button className="avatar-btn" onClick={()=>setMenuOpen(v=>!v)} type="button">
+              {account.username[0].toUpperCase()} <ChevronDown size={12}/>
             </button>
             {menuOpen && (
-              <div className="pf-menu">
-                <div className="pf-menu-head">
-                  <div className="pf-menu-name">{account.username}</div>
-                  <div className="pf-menu-email">{account.email}</div>
+              <div className="dropdown">
+                <div className="dd-head">
+                  <div className="dd-name">{account.username}</div>
+                  <div className="dd-email">{account.email}</div>
                 </div>
-                <button className="pf-menu-item" onClick={onLogout} type="button"><LogOut size={13}/> Log out</button>
+                <button className="dd-item" onClick={onLogout} type="button"><LogOut size={13}/> Log out</button>
               </div>
             )}
           </div>
@@ -316,161 +296,159 @@ function ToolScreen({ account, setAccount, onLogout }) {
       </header>
 
       {/* Tab bar */}
-      <div className="pf-tabbar">
-        <button className={"pf-maintab"+(tab==="generate"?" pf-maintab-on":"")} onClick={()=>setTab("generate")} type="button">
-          <Zap size={14}/> Generate
+      <div className="main-tabs">
+        <button className={"main-tab"+(tab==="generate"?" main-tab-on":"")} onClick={()=>setTab("generate")} type="button">
+          <Zap size={13}/> Generate
         </button>
-        <button className={"pf-maintab"+(tab==="history"?" pf-maintab-on":"")} onClick={()=>setTab("history")} type="button">
-          <Clock size={14}/> History <span className="pf-count">{messages.length}</span>
+        <button className={"main-tab"+(tab==="history"?" main-tab-on":"")} onClick={()=>setTab("history")} type="button">
+          <History size={13}/> History <span className="badge">{messages.length}</span>
         </button>
       </div>
 
+      {/* Generate tab */}
       {tab === "generate" && (
-        <div className="pf-main">
-          {/* ---- Left: Input ---- */}
-          <section className="pf-input-col">
-            <div className="pf-section-label">01 · INSTAGRAM SCREENSHOTS</div>
-
-            <div className="pf-img-grid">
-              <ImageDropZone label="Profile page" sublabel="Required" file={imgProfile} onFile={setImgProfile} inputRef={profileRef} accent />
-              <ImageDropZone label="Post 1"       sublabel="Optional" file={imgPost1}   onFile={setImgPost1}   inputRef={post1Ref}  />
-              <ImageDropZone label="Post 2"       sublabel="Optional" file={imgPost2}   onFile={setImgPost2}   inputRef={post2Ref}  />
+        <div className="main-grid">
+          {/* Input column */}
+          <div className="col-input">
+            <div className="section-label">01 · SCREENSHOTS</div>
+            <div className="img-grid">
+              <DropZone label="Profile page" sub="Required" file={imgP} onFile={setImgP} ref_={refP} accent/>
+              <DropZone label="Post 1"       sub="Optional" file={img1} onFile={setImg1} ref_={ref1}/>
+              <DropZone label="Post 2"       sub="Optional" file={img2} onFile={setImg2} ref_={ref2}/>
             </div>
 
-            <div className="pf-section-label" style={{marginTop:24}}>02 · BUSINESS INFO</div>
-
-            <label className="pf-field">
-              <span className="pf-field-label">Business name</span>
-              <div className="pf-field-wrap">
-                <span className="pf-field-icon"><Building2 size={15}/></span>
-                <input className="pf-input" value={bizName} onChange={e=>setBizName(e.target.value)} placeholder="e.g. Bloom Bakery"/>
+            <div className="section-label" style={{marginTop:22}}>02 · BUSINESS INFO</div>
+            <label className="field">
+              <span className="field-label">Business name</span>
+              <div className="field-wrap">
+                <span className="field-icon"><Building2 size={14}/></span>
+                <input className="input" value={bizName} onChange={e=>setBizName(e.target.value)} placeholder="e.g. Bloom Bakery"/>
+              </div>
+            </label>
+            <label className="field">
+              <span className="field-label">Industry / field</span>
+              <div className="field-wrap">
+                <span className="field-icon"><Tag size={14}/></span>
+                <input className="input" value={bizField} onChange={e=>setBizField(e.target.value)} placeholder="e.g. Artisan bakery, fitness coaching…"/>
               </div>
             </label>
 
-            <label className="pf-field">
-              <span className="pf-field-label">Field / industry</span>
-              <div className="pf-field-wrap">
-                <span className="pf-field-icon"><Tag size={15}/></span>
-                <input className="pf-input" value={bizField} onChange={e=>setBizField(e.target.value)} placeholder="e.g. Artisan bakery, fitness coaching, real estate…"/>
+            <div className="section-label" style={{marginTop:22}}>03 · YOUR GOAL <span className="goal-optional">optional</span></div>
+            <label className="field">
+              <span className="field-label">What do you want from them?</span>
+              <div className="field-wrap field-wrap-tall">
+                <textarea
+                  className="input input-textarea"
+                  value={customGoal}
+                  onChange={e=>setCustomGoal(e.target.value)}
+                  placeholder={`Leave blank to pitch a free social media post.\n\nOr describe your actual goal, e.g:\n"Pitch our video editing service"\n"Invite them to be a podcast guest"\n"Offer them an affiliate deal"`}
+                  rows={4}
+                />
               </div>
             </label>
 
-            {apiErr && <div className="pf-banner pf-banner-err"><AlertCircle size={13}/> {apiErr}</div>}
+            {apiErr && <div className="banner err-banner"><AlertCircle size={13}/> {apiErr}</div>}
 
-            <button className="pf-btn pf-btn-primary pf-btn-full" onClick={handleGenerate} disabled={generating} type="button">
-              {generating ? <Loader2 size={15} className="pf-spin"/> : <Sparkles size={15}/>}
+            <button className="btn btn-primary btn-full" onClick={generate} disabled={generating} type="button">
+              {generating ? <Loader2 size={14} className="spin"/> : <Sparkles size={14}/>}
               {generating ? "Analysing & writing…" : "Generate pitch message"}
             </button>
 
             {generating && (
-              <div className="pf-generating-steps">
-                <Step label="Reading Instagram screenshots"  done={true} />
-                <Step label="Analysing brand strengths"      done={true} />
-                <Step label="Identifying quick wins"         done={true} />
-                <Step label="Writing personalised message"   done={false} active />
+              <div className="steps">
+                <Step label="Reading screenshots"        done/>
+                <Step label="Spotting brand strengths"   done/>
+                <Step label="Finding one quick win"      done/>
+                <Step label="Writing the message"        active/>
               </div>
             )}
-          </section>
+          </div>
 
-          {/* ---- Right: Output ---- */}
-          <section className="pf-output-col">
-            <div className="pf-section-label">03 · YOUR PITCH MESSAGE</div>
+          {/* Output column */}
+          <div className="col-output">
+            <div className="section-label">04 · YOUR PITCH</div>
 
-            {!generated && !generating && (
-              <div className="pf-output-empty">
-                <div className="pf-empty-icon"><Camera size={28}/></div>
-                <p>Upload the screenshots, fill in the business details, and hit Generate — your personalised pitch will appear here.</p>
+            {!current && !generating && (
+              <div className="empty-state">
+                <div className="empty-icon"><Camera size={26}/></div>
+                <p>Upload the screenshots, fill in the business details, and hit Generate — your pitch appears here.</p>
               </div>
             )}
 
-            {(generated || generating) && (
-              <div className="pf-output-card">
-                {/* Business tag */}
-                {generated && (
-                  <div className="pf-output-meta">
-                    <span className="pf-output-biz">{generated.business_name}</span>
-                    <span className="pf-output-field">{generated.business_field}</span>
-                    <span className="pf-output-date">{new Date(generated.created_at).toLocaleDateString()}</span>
+            {(current || generating) && (
+              <div className="output-card">
+                {current && (
+                  <div className="output-meta">
+                    <span className="output-biz">{current.business_name}</span>
+                    <span className="output-field">{current.business_field}</span>
+                    {current.custom_goal && <span className="output-goal">🎯 {current.custom_goal}</span>}
+                    <span className="output-date">{new Date(current.created_at).toLocaleDateString()}</span>
                   </div>
                 )}
 
-                {/* Message text */}
-                <div className="pf-message-box">
-                  {generating && !displayText && (
-                    <div className="pf-generating-dots">
-                      <span/><span/><span/>
-                    </div>
+                <div className="msg-box">
+                  {generating && !displayTxt && (
+                    <div className="dots"><span/><span/><span/></div>
                   )}
-                  {displayText && (
-                    <pre className="pf-message-text">
-                      {displayText}{typing && <span className="pf-cursor">|</span>}
+                  {displayTxt && (
+                    <pre className="msg-text">
+                      {displayTxt}{typing && <span className="cursor">|</span>}
                     </pre>
                   )}
                 </div>
 
-                {/* Actions */}
-                {generated && !typing && (
+                {current && !typing && (
                   <>
-                    <div className="pf-output-actions">
-                      <button className="pf-btn pf-btn-ghost pf-btn-sm" onClick={copyText} type="button">
-                        {copied ? <><Check size={13}/> Copied!</> : <><Copy size={13}/> Copy message</>}
+                    <div className="output-actions">
+                      <button className="btn btn-ghost btn-sm" onClick={copyMsg} type="button">
+                        {copied ? <><Check size={12}/> Copied!</> : <><Copy size={12}/> Copy</>}
                       </button>
-                      <button className="pf-btn pf-btn-ghost pf-btn-sm" onClick={reset} type="button">
-                        <RotateCcw size={13}/> New pitch
+                      <button className="btn btn-ghost btn-sm" onClick={resetForm} type="button">
+                        <RotateCcw size={12}/> New pitch
                       </button>
                     </div>
 
-                    {/* Outcome tracker */}
-                    <div className="pf-outcome-section">
-                      <div className="pf-outcome-label">Did this message get a reply?</div>
-                      {!generated.outcome ? (
-                        <div className="pf-outcome-btns">
-                          <OutcomeBtn
-                            type="success"
-                            onClick={() => setOutcome(generated.id, "success")}
-                            icon={<CheckCircle2 size={14}/>}
-                            label="It worked! 🎉"
-                          />
-                          <OutcomeBtn
-                            type="failure"
-                            onClick={() => setOutcome(generated.id, "failure")}
-                            icon={<XCircle size={14}/>}
-                            label="No reply"
-                          />
+                    <div className="outcome-box">
+                      <div className="outcome-label">Did this get a reply?</div>
+                      {!current.outcome ? (
+                        <div className="outcome-btns">
+                          <button className="ob ob-s" onClick={()=>markOutcome(current.id,"success")} type="button">
+                            <CheckCircle size={13}/> It worked! 🎉
+                          </button>
+                          <button className="ob ob-f" onClick={()=>markOutcome(current.id,"failure")} type="button">
+                            <XCircle size={13}/> No reply
+                          </button>
                         </div>
                       ) : (
-                        <OutcomeResult outcome={generated.outcome} />
+                        <OutcomeTag outcome={current.outcome}/>
                       )}
-                      <p className="pf-outcome-hint">
-                        PitchForge uses your results to refine future messages automatically.
-                      </p>
+                      <p className="outcome-hint">PitchForge uses your results to write better messages next time.</p>
                     </div>
                   </>
                 )}
               </div>
             )}
-          </section>
+          </div>
         </div>
       )}
 
+      {/* History tab */}
       {tab === "history" && (
-        <div className="pf-history">
+        <div className="history-wrap">
           {messages.length === 0 ? (
-            <div className="pf-output-empty" style={{margin:"48px auto"}}>
-              <div className="pf-empty-icon"><Clock size={28}/></div>
+            <div className="empty-state" style={{margin:"60px auto"}}>
+              <div className="empty-icon"><History size={26}/></div>
               <p>No messages yet. Generate your first pitch and it'll appear here.</p>
             </div>
           ) : (
             <>
-              <div className="pf-history-legend">
-                <span className="pf-legend-s"><CheckCircle2 size={11}/> Won</span>
-                <span className="pf-legend-f"><XCircle      size={11}/> Lost</span>
-                <span className="pf-legend-p"><Clock        size={11}/> Pending</span>
+              <div className="history-legend">
+                <span style={{color:"#10B981"}}><CheckCircle size={11}/> Won</span>
+                <span style={{color:"#F43F5E"}}><XCircle     size={11}/> Lost</span>
+                <span style={{color:"#94A3B8"}}><Clock       size={11}/> Pending</span>
               </div>
-              <div className="pf-history-grid">
-                {messages.map(m => (
-                  <HistoryCard key={m.id} msg={m} onOutcome={setOutcome} />
-                ))}
+              <div className="history-list">
+                {messages.map(m => <HistoryCard key={m.id} msg={m} onOutcome={markOutcome}/>)}
               </div>
             </>
           )}
@@ -481,36 +459,30 @@ function ToolScreen({ account, setAccount, onLogout }) {
 }
 
 /* ---------------------------------------------------------------
-   Image Drop Zone
+   Drop zone
 --------------------------------------------------------------- */
-function ImageDropZone({ label, sublabel, file, onFile, inputRef, accent }) {
+function DropZone({ label, sub, file, onFile, ref_, accent }) {
   const [drag, setDrag] = useState(false);
-
-  function handle(f) {
-    if (f && f.type.startsWith("image/")) onFile(f);
-  }
-
+  function handle(f) { if (f && f.type.startsWith("image/")) onFile(f); }
   return (
     <div
-      className={"pf-dropzone"+(drag?" pf-dz-drag":"")+(accent?" pf-dz-accent":"")+(file?" pf-dz-filled":"")}
+      className={"dz"+(drag?" dz-drag":"")+(accent?" dz-accent":"")+(file?" dz-filled":"")}
       onDragOver={e=>{e.preventDefault();setDrag(true);}}
       onDragLeave={()=>setDrag(false)}
       onDrop={e=>{e.preventDefault();setDrag(false);handle(e.dataTransfer.files[0]);}}
-      onClick={()=>inputRef.current?.click()}
+      onClick={()=>ref_.current?.click()}
     >
-      <input ref={inputRef} type="file" accept="image/*" hidden onChange={e=>handle(e.target.files[0])}/>
+      <input ref={ref_} type="file" accept="image/*" hidden onChange={e=>handle(e.target.files[0])}/>
       {file ? (
         <>
-          <img src={URL.createObjectURL(file)} alt={label} className="pf-dz-preview"/>
-          <button className="pf-dz-remove" onClick={e=>{e.stopPropagation();onFile(null);}} type="button">
-            <X size={12}/>
-          </button>
+          <img src={URL.createObjectURL(file)} alt={label} className="dz-img"/>
+          <button className="dz-remove" onClick={e=>{e.stopPropagation();onFile(null);}} type="button"><X size={11}/></button>
         </>
       ) : (
-        <div className="pf-dz-inner">
-          <Upload size={16} color={accent?"#7C3AED":"#475569"}/>
-          <div className="pf-dz-label">{label}</div>
-          <div className="pf-dz-sub">{sublabel}</div>
+        <div className="dz-inner">
+          <Upload size={15} color={accent?"#7C3AED":"#475569"}/>
+          <div className="dz-label">{label}</div>
+          <div className="dz-sub">{sub}</div>
         </div>
       )}
     </div>
@@ -518,59 +490,55 @@ function ImageDropZone({ label, sublabel, file, onFile, inputRef, accent }) {
 }
 
 /* ---------------------------------------------------------------
-   History Card
+   History card
 --------------------------------------------------------------- */
 function HistoryCard({ msg, onOutcome }) {
-  const [expanded, setExpanded] = useState(false);
-  const [note,     setNote]     = useState("");
-  const [pending,  setPending]  = useState(false);
+  const [open,  setOpen]  = useState(false);
+  const [note,  setNote]  = useState("");
+  const [busy,  setBusy]  = useState(false);
 
   async function mark(outcome) {
-    setPending(true);
+    setBusy(true);
     await onOutcome(msg.id, outcome, note);
-    setPending(false);
+    setBusy(false);
   }
 
-  const statusClass = msg.outcome === "success" ? "pf-hcard-s" : msg.outcome === "failure" ? "pf-hcard-f" : "pf-hcard-p";
-  const StatusIcon  = msg.outcome === "success" ? CheckCircle2 : msg.outcome === "failure" ? XCircle : Clock;
-  const statusColor = msg.outcome === "success" ? "#10B981"    : msg.outcome === "failure" ? "#F43F5E" : "#94A3B8";
+  const color = msg.outcome === "success" ? "#10B981" : msg.outcome === "failure" ? "#F43F5E" : "#64748B";
+  const Icon  = msg.outcome === "success" ? CheckCircle : msg.outcome === "failure" ? XCircle : Clock;
 
   return (
-    <div className={"pf-hcard "+statusClass}>
-      <div className="pf-hcard-head" onClick={()=>setExpanded(v=>!v)}>
-        <div className="pf-hcard-info">
-          <StatusIcon size={14} color={statusColor}/>
+    <div className={"hcard hcard-"+(msg.outcome||"pending")}>
+      <div className="hcard-head" onClick={()=>setOpen(v=>!v)}>
+        <div className="hcard-left">
+          <Icon size={14} color={color}/>
           <div>
-            <div className="pf-hcard-biz">{msg.business_name}</div>
-            <div className="pf-hcard-field">{msg.business_field} · {new Date(msg.created_at).toLocaleDateString()}</div>
+            <div className="hcard-biz">{msg.business_name}</div>
+            <div className="hcard-meta">
+              {msg.business_field}
+              {msg.custom_goal && <span className="hcard-goal"> · 🎯 {msg.custom_goal}</span>}
+              {" · "}{new Date(msg.created_at).toLocaleDateString()}
+            </div>
           </div>
         </div>
-        <ChevronRight size={14} className={"pf-hcard-chevron"+(expanded?" pf-rotated":"")}/>
+        <ChevronRight size={13} className={"chevron"+(open?" rotated":"")} color="#64748B"/>
       </div>
 
-      {expanded && (
-        <div className="pf-hcard-body">
-          <pre className="pf-hcard-text">{msg.generated_text}</pre>
-
+      {open && (
+        <div className="hcard-body">
+          <pre className="hcard-text">{msg.generated_text}</pre>
           {!msg.outcome ? (
-            <div className="pf-hcard-outcome">
-              <div className="pf-outcome-label">Did this get a reply?</div>
-              <textarea
-                className="pf-note-input"
-                placeholder="Optional note (e.g. 'They asked for pricing')"
-                value={note}
-                onChange={e=>setNote(e.target.value)}
-                rows={2}
-              />
-              <div className="pf-outcome-btns">
-                <OutcomeBtn type="success" onClick={()=>mark("success")} icon={<CheckCircle2 size={13}/>} label="It worked!" disabled={pending}/>
-                <OutcomeBtn type="failure" onClick={()=>mark("failure")} icon={<XCircle      size={13}/>} label="No reply"   disabled={pending}/>
+            <div className="hcard-outcome">
+              <div className="outcome-label">Did this get a reply?</div>
+              <textarea className="note-input" rows={2} placeholder="Optional note (e.g. 'Asked for pricing')" value={note} onChange={e=>setNote(e.target.value)}/>
+              <div className="outcome-btns">
+                <button className="ob ob-s" onClick={()=>mark("success")} disabled={busy} type="button"><CheckCircle size={12}/> It worked!</button>
+                <button className="ob ob-f" onClick={()=>mark("failure")} disabled={busy} type="button"><XCircle     size={12}/> No reply</button>
               </div>
             </div>
           ) : (
-            <div className="pf-hcard-result">
-              <OutcomeResult outcome={msg.outcome}/>
-              {msg.outcome_note && <div className="pf-hcard-note">"{msg.outcome_note}"</div>}
+            <div style={{marginTop:10}}>
+              <OutcomeTag outcome={msg.outcome}/>
+              {msg.outcome_note && <div className="hcard-note">"{msg.outcome_note}"</div>}
             </div>
           )}
         </div>
@@ -582,270 +550,218 @@ function HistoryCard({ msg, onOutcome }) {
 /* ---------------------------------------------------------------
    Small shared components
 --------------------------------------------------------------- */
-function OutcomeBtn({ type, onClick, icon, label, disabled }) {
+function OutcomeTag({ outcome }) {
+  const s = outcome === "success";
   return (
-    <button
-      className={"pf-outcome-btn pf-ob-"+type}
-      onClick={onClick}
-      disabled={disabled}
-      type="button"
-    >
-      {icon} {label}
-    </button>
-  );
-}
-
-function OutcomeResult({ outcome }) {
-  const is = outcome === "success";
-  return (
-    <div className={"pf-outcome-result pf-or-"+(is?"s":"f")}>
-      {is ? <CheckCircle2 size={14}/> : <XCircle size={14}/>}
-      {is ? "Marked as won — PitchForge will reinforce this style." : "Marked as lost — PitchForge will adjust future messages."}
+    <div className={"outcome-tag "+(s?"tag-s":"tag-f")}>
+      {s ? <CheckCircle size={13}/> : <XCircle size={13}/>}
+      {s ? "Marked as won — PitchForge will reinforce this style." : "Marked as lost — PitchForge will adjust future messages."}
     </div>
   );
 }
 
 function Step({ label, done, active }) {
   return (
-    <div className={"pf-step"+(done?" pf-step-done":"")+(active?" pf-step-active":"")}>
-      {done   ? <Check     size={12}/> :
-       active ? <Loader2   size={12} className="pf-spin"/> :
-                <span className="pf-step-dot"/>}
+    <div className={"step"+(done?" step-done":active?" step-active":"")}>
+      {done ? <Check size={11}/> : active ? <Loader2 size={11} className="spin"/> : <span className="step-dot"/>}
       {label}
     </div>
   );
 }
 
 /* ---------------------------------------------------------------
-   Styles
+   All styles
 --------------------------------------------------------------- */
 function Styles() {
   return (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+      body{background:#0D1117;color:#E2E8F0;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
 
-      .pf-root {
-        --navy:   #0D1117;
-        --panel:  #161B22;
-        --card:   #1C2230;
-        --line:   #30374A;
-        --fog:    #64748B;
-        --slate:  #94A3B8;
-        --bone:   #E2E8F0;
-        --white:  #F0F4FF;
-        --violet: #7C3AED;
-        --violet-dim: #5B21B6;
-        --violet-glow: rgba(124,58,237,0.15);
-        --emerald:#10B981;
-        --rose:   #F43F5E;
-        --amber:  #F59E0B;
-        background: var(--navy);
-        color: var(--bone);
-        font-family: 'Inter', sans-serif;
-        min-height: 100vh;
-        -webkit-font-smoothing: antialiased;
+      .root{
+        --navy:#0D1117; --panel:#161B22; --card:#1C2230; --line:#30374A;
+        --fog:#64748B; --slate:#94A3B8; --bone:#E2E8F0; --white:#F0F4FF;
+        --violet:#7C3AED; --vdim:#5B21B6; --vglow:rgba(124,58,237,.15);
+        --green:#10B981; --red:#F43F5E; --amber:#F59E0B;
+        min-height:100vh;
       }
-      .pf-root *:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
-      .pf-display { font-family: 'Syne', sans-serif; }
-      .pf-violet  { color: var(--violet); }
+      .root *:focus-visible{outline:2px solid var(--violet);outline-offset:2px;}
+      .violet{color:var(--violet);}
 
       /* ---- Auth ---- */
-      .pf-auth { display: grid; grid-template-columns: 1.1fr 0.9fr; min-height: 100vh; }
+      .auth-wrap{display:grid;grid-template-columns:1.1fr .9fr;min-height:100vh;}
+      .auth-left{background:linear-gradient(135deg,#0D1117,#120D2E);border-right:1px solid var(--line);padding:52px 52px;display:flex;flex-direction:column;gap:28px;position:relative;overflow:hidden;}
+      .auth-logo{display:flex;align-items:center;gap:8px;font-family:'Syne',sans-serif;font-size:17px;font-weight:700;color:var(--violet);}
+      .auth-title{font-family:'Syne',sans-serif;font-size:34px;line-height:1.25;font-weight:800;color:var(--white);max-width:440px;}
+      .auth-sub{color:var(--slate);font-size:14.5px;line-height:1.7;max-width:420px;}
+      .auth-bullets{display:flex;flex-direction:column;gap:10px;}
+      .bullet{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--bone);}
 
-      .pf-auth-left {
-        background: linear-gradient(135deg, #0D1117 0%, #130D2E 100%);
-        border-right: 1px solid var(--line);
-        padding: 52px 56px;
-        display: flex; flex-direction: column; gap: 32px;
-        position: relative; overflow: hidden;
-      }
-      .pf-auth-logo { display: flex; align-items: center; gap: 8px; font-family: 'Syne', sans-serif; font-size: 17px; font-weight: 700; color: var(--violet); }
-      .pf-auth-hero h1 { font-size: 36px; line-height: 1.2; font-weight: 800; color: var(--white); max-width: 460px; }
-      .pf-auth-sub { color: var(--slate); font-size: 15px; line-height: 1.7; max-width: 440px; margin-top: 14px; }
-      .pf-auth-pills { display: flex; flex-direction: column; gap: 10px; }
-      .pf-pill { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--bone); }
+      /* Orbit */
+      .orbit-stage{position:absolute;bottom:-70px;right:-70px;width:300px;height:300px;}
+      .ring{position:absolute;border-radius:50%;border:1px solid;}
+      .ring-1{width:150px;height:150px;top:75px;left:75px;border-color:rgba(124,58,237,.22);animation:spin 12s linear infinite;}
+      .ring-2{width:230px;height:230px;top:35px;left:35px;border-color:rgba(124,58,237,.12);animation:spin 20s linear infinite reverse;}
+      .ring-3{width:300px;height:300px;top:0;left:0;border-color:rgba(124,58,237,.07);animation:spin 30s linear infinite;}
+      .orbit-core{position:absolute;width:44px;height:44px;top:128px;left:128px;background:var(--violet);border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 0 36px rgba(124,58,237,.45);}
+      .orbit-dot{position:absolute;width:24px;height:24px;background:var(--card);border:1px solid var(--line);border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--violet);}
+      .od-1{top:56px;left:138px;} .od-2{top:138px;left:226px;} .od-3{top:218px;left:110px;}
+      @keyframes spin{to{transform:rotate(360deg);}}
 
-      /* Orbit animation */
-      .pf-auth-orbit { position: absolute; bottom: -60px; right: -60px; width: 320px; height: 320px; }
-      .pf-orbit-ring { position: absolute; border-radius: 50%; border: 1px solid; }
-      .pf-orbit-1 { width: 160px; height: 160px; top: 80px; left: 80px; border-color: rgba(124,58,237,.2); animation: pf-spin 12s linear infinite; }
-      .pf-orbit-2 { width: 240px; height: 240px; top: 40px; left: 40px; border-color: rgba(124,58,237,.12); animation: pf-spin 20s linear infinite reverse; }
-      .pf-orbit-3 { width: 320px; height: 320px; top: 0;    left: 0;    border-color: rgba(124,58,237,.07); animation: pf-spin 30s linear infinite; }
-      .pf-orbit-core { position: absolute; width: 48px; height: 48px; top: 136px; left: 136px; background: var(--violet); border-radius: 14px; display: flex; align-items: center; justify-content: center; color: #fff; box-shadow: 0 0 40px rgba(124,58,237,.4); }
-      .pf-orbit-dot { position: absolute; width: 26px; height: 26px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--violet); }
-      .pf-od-1 { top: 60px;  left: 148px; }
-      .pf-od-2 { top: 148px; left: 240px; }
-      .pf-od-3 { top: 230px; left: 120px; }
-      @keyframes pf-spin { to { transform: rotate(360deg); } }
+      .auth-right{display:flex;align-items:center;justify-content:center;padding:40px;background:var(--navy);}
+      .auth-card{width:100%;max-width:370px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;}
 
-      .pf-auth-right { display: flex; align-items: center; justify-content: center; padding: 40px; background: var(--navy); }
-      .pf-auth-card  { width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px; }
+      /* Tabs */
+      .tabs{display:flex;gap:3px;background:var(--navy);border-radius:10px;padding:4px;margin-bottom:22px;}
+      .tab{flex:1;background:none;border:none;color:var(--fog);font-family:'Inter';font-size:14px;font-weight:600;padding:9px;border-radius:7px;cursor:pointer;}
+      .tab-on{background:var(--card);color:var(--white);}
 
-      .pf-tabs { display: flex; gap: 4px; background: var(--navy); border-radius: 10px; padding: 4px; margin-bottom: 24px; }
-      .pf-tab  { flex: 1; background: none; border: none; color: var(--fog); font-family: 'Inter'; font-size: 14px; font-weight: 600; padding: 9px 0; border-radius: 7px; cursor: pointer; }
-      .pf-tab-on { background: var(--card); color: var(--white); }
+      /* Form */
+      .form{display:flex;flex-direction:column;gap:14px;}
+      .field{display:flex;flex-direction:column;gap:5px;}
+      .field-label{font-size:11px;color:var(--slate);text-transform:uppercase;letter-spacing:.06em;font-weight:500;}
+      .field-wrap{display:flex;align-items:center;background:var(--navy);border:1px solid var(--line);border-radius:9px;padding:0 11px;transition:border-color .15s;}
+      .field-wrap:focus-within{border-color:var(--violet);}
+      .field-err{border-color:var(--red)!important;}
+      .field-icon{color:var(--fog);display:flex;flex-shrink:0;}
+      .input{flex:1;background:none;border:none;color:var(--white);font-family:'Inter';font-size:14px;padding:10px 9px;outline:none;}
+      .input::placeholder{color:var(--fog);}
+      .eye-btn{background:none;border:none;color:var(--fog);cursor:pointer;display:flex;padding:3px;}
+      .err-msg{display:flex;align-items:center;gap:5px;color:var(--red);font-size:12px;}
+      .fine{color:var(--fog);font-size:12px;text-align:center;}
 
-      /* ---- Fields ---- */
-      .pf-form  { display: flex; flex-direction: column; gap: 16px; }
-      .pf-field { display: flex; flex-direction: column; gap: 6px; }
-      .pf-field-label { font-size: 11.5px; color: var(--slate); text-transform: uppercase; letter-spacing: .06em; font-weight: 500; }
-      .pf-field-wrap  { display: flex; align-items: center; background: var(--navy); border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; transition: border-color .15s; }
-      .pf-field-wrap:focus-within { border-color: var(--violet); }
-      .pf-field-err   { border-color: var(--rose); }
-      .pf-field-icon  { color: var(--fog); display: flex; flex-shrink: 0; }
-      .pf-input       { flex: 1; background: none; border: none; color: var(--white); font-family: 'Inter'; font-size: 14px; padding: 11px 10px; outline: none; }
-      .pf-input::placeholder { color: var(--fog); }
-      .pf-eye         { background: none; border: none; color: var(--fog); cursor: pointer; display: flex; padding: 4px; }
-      .pf-err-msg     { display: flex; align-items: center; gap: 5px; color: var(--rose); font-size: 12px; }
-      .pf-fine        { color: var(--fog); font-size: 12px; text-align: center; }
+      /* Buttons */
+      .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-family:'Inter';font-weight:600;font-size:14px;padding:11px 18px;border-radius:9px;border:1px solid transparent;cursor:pointer;transition:all .15s;text-decoration:none;}
+      .btn:disabled{opacity:.45;cursor:not-allowed;}
+      .btn-full{width:100%;}
+      .btn-primary{background:var(--violet);color:#fff;}
+      .btn-primary:hover:not(:disabled){background:#6D28D9;}
+      .btn-ghost{background:transparent;border-color:var(--line);color:var(--bone);}
+      .btn-ghost:hover:not(:disabled){border-color:var(--violet);color:var(--violet);}
+      .btn-sm{font-size:13px;padding:8px 13px;}
+      .spin{animation:spin .9s linear infinite;}
 
-      /* ---- Buttons ---- */
-      .pf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-family: 'Inter'; font-weight: 600; font-size: 14px; padding: 11px 18px; border-radius: 10px; border: 1px solid transparent; cursor: pointer; transition: all .15s; text-decoration: none; }
-      .pf-btn:disabled { opacity: .45; cursor: not-allowed; }
-      .pf-btn-full    { width: 100%; }
-      .pf-btn-primary { background: var(--violet); color: #fff; border-color: var(--violet); }
-      .pf-btn-primary:hover:not(:disabled) { background: #6D28D9; }
-      .pf-btn-ghost   { background: transparent; border-color: var(--line); color: var(--bone); }
-      .pf-btn-ghost:hover:not(:disabled) { border-color: var(--violet); color: var(--violet); }
-      .pf-btn-sm      { font-size: 13px; padding: 8px 14px; }
+      /* Banner */
+      .banner{display:flex;align-items:center;gap:8px;padding:10px 13px;border-radius:8px;font-size:13px;}
+      .err-banner{background:rgba(244,63,94,.1);border:1px solid rgba(244,63,94,.3);color:var(--red);}
 
-      .pf-spin { animation: pf-spin-kf 1s linear infinite; }
-      @keyframes pf-spin-kf { to { transform: rotate(360deg); } }
+      /* ---- Tool ---- */
+      .tool{min-height:100vh;display:flex;flex-direction:column;}
+      .topbar{display:flex;align-items:center;justify-content:space-between;padding:13px 26px;border-bottom:1px solid var(--line);background:var(--panel);}
+      .topbar-logo{display:flex;align-items:center;gap:7px;font-family:'Syne';font-size:15px;font-weight:700;color:var(--violet);}
+      .topbar-right{display:flex;align-items:center;gap:8px;}
+      .stat-pill{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;border:1px solid var(--line);}
+      .stat-s{color:var(--green);border-color:rgba(16,185,129,.25);background:rgba(16,185,129,.08);}
+      .stat-f{color:var(--red);border-color:rgba(244,63,94,.25);background:rgba(244,63,94,.08);}
+      .stat-p{color:var(--slate);}
+      .acct-wrap{position:relative;}
+      .avatar-btn{display:flex;align-items:center;gap:4px;background:var(--card);border:1px solid var(--line);color:var(--bone);height:33px;padding:0 10px;border-radius:999px;cursor:pointer;font-weight:700;font-size:13px;}
+      .dropdown{position:absolute;right:0;top:41px;width:200px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:7px;z-index:50;}
+      .dd-head{padding:8px 10px 9px;border-bottom:1px solid var(--line);margin-bottom:5px;}
+      .dd-name{font-weight:600;font-size:14px;} .dd-email{color:var(--fog);font-size:11px;margin-top:2px;}
+      .dd-item{display:flex;align-items:center;gap:7px;width:100%;background:none;border:none;color:var(--bone);font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer;text-align:left;}
+      .dd-item:hover{background:var(--card);}
 
-      /* ---- Banner ---- */
-      .pf-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 8px; font-size: 13px; }
-      .pf-banner-err { background: rgba(244,63,94,.1); border: 1px solid rgba(244,63,94,.3); color: var(--rose); }
+      /* Main tabs */
+      .main-tabs{display:flex;padding:9px 26px 0;border-bottom:1px solid var(--line);background:var(--panel);}
+      .main-tab{display:flex;align-items:center;gap:6px;background:none;border:none;border-bottom:2px solid transparent;color:var(--fog);font-family:'Inter';font-size:14px;font-weight:600;padding:9px 14px;cursor:pointer;margin-bottom:-1px;}
+      .main-tab-on{color:var(--violet);border-bottom-color:var(--violet);}
+      .badge{background:var(--card);color:var(--slate);font-size:11px;padding:2px 7px;border-radius:999px;font-weight:600;}
 
-      /* ---- Tool: topbar ---- */
-      .pf-topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--panel); }
-      .pf-topbar-logo { display: flex; align-items: center; gap: 8px; font-family: 'Syne'; font-size: 15px; font-weight: 700; color: var(--violet); }
-      .pf-topbar-right { display: flex; align-items: center; gap: 10px; }
-      .pf-stat-pill { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); }
-      .pf-stat-s { color: var(--emerald); border-color: rgba(16,185,129,.25); background: rgba(16,185,129,.08); }
-      .pf-stat-f { color: var(--rose);    border-color: rgba(244,63,94,.25);  background: rgba(244,63,94,.08); }
-      .pf-stat-p { color: var(--slate);   border-color: var(--line); }
+      /* Grid */
+      .main-grid{display:grid;grid-template-columns:1fr 1fr;flex:1;}
+      .col-input{padding:26px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:13px;}
+      .col-output{padding:26px;display:flex;flex-direction:column;gap:13px;}
+      .section-label{font-size:10.5px;font-weight:700;color:var(--violet);text-transform:uppercase;letter-spacing:.1em;}
 
-      /* Account menu */
-      .pf-acct-wrap { position: relative; }
-      .pf-avatar    { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--line); color: var(--bone); height: 34px; padding: 0 10px; border-radius: 999px; cursor: pointer; font-weight: 700; font-size: 13px; }
-      .pf-menu      { position: absolute; right: 0; top: 42px; width: 210px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; z-index: 50; }
-      .pf-menu-head { padding: 8px 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
-      .pf-menu-name { font-weight: 600; font-size: 14px; }
-      .pf-menu-email{ color: var(--fog); font-size: 11px; margin-top: 2px; }
-      .pf-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; color: var(--bone); font-size: 13px; padding: 9px 10px; border-radius: 6px; cursor: pointer; text-align: left; }
-      .pf-menu-item:hover { background: var(--card); }
+      /* Drop zones */
+      .img-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;}
+      .dz{position:relative;border:1.5px dashed var(--line);border-radius:11px;height:108px;cursor:pointer;overflow:hidden;transition:border-color .15s,background .15s;display:flex;align-items:center;justify-content:center;background:var(--card);}
+      .dz:hover{border-color:var(--slate);}
+      .dz-drag{border-color:var(--violet);background:var(--vglow);}
+      .dz-accent{border-color:rgba(124,58,237,.4);}
+      .dz-filled{border-style:solid;border-color:var(--violet);}
+      .dz-inner{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;padding:10px;}
+      .dz-label{font-size:11.5px;font-weight:600;color:var(--bone);}
+      .dz-sub{font-size:10px;color:var(--fog);}
+      .dz-img{width:100%;height:100%;object-fit:cover;display:block;}
+      .dz-remove{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.7);border:none;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;color:#fff;cursor:pointer;}
 
-      /* ---- Tab bar ---- */
-      .pf-tabbar    { display: flex; gap: 2px; padding: 10px 28px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
-      .pf-maintab   { display: flex; align-items: center; gap: 6px; background: none; border: none; border-bottom: 2px solid transparent; color: var(--fog); font-family: 'Inter'; font-size: 14px; font-weight: 600; padding: 10px 16px; cursor: pointer; margin-bottom: -1px; }
-      .pf-maintab-on { color: var(--violet); border-bottom-color: var(--violet); }
-      .pf-count     { background: var(--card); color: var(--slate); font-size: 11px; padding: 2px 7px; border-radius: 999px; font-weight: 600; }
+      /* Steps */
+      .steps{display:flex;flex-direction:column;gap:7px;}
+      .step{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--fog);}
+      .step-done{color:var(--green);} .step-active{color:var(--violet);}
+      .step-dot{width:6px;height:6px;border-radius:50%;background:var(--line);display:inline-block;}
 
-      /* ---- Main layout ---- */
-      .pf-main { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: calc(100vh - 105px); }
+      /* Output */
+      .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:13px;min-height:300px;color:var(--fog);text-align:center;max-width:280px;margin:0 auto;line-height:1.6;font-size:14px;}
+      .empty-icon{width:52px;height:52px;background:var(--card);border:1px solid var(--line);border-radius:14px;display:flex;align-items:center;justify-content:center;color:var(--violet);}
+      .output-card{background:var(--card);border:1px solid var(--line);border-radius:13px;overflow:hidden;display:flex;flex-direction:column;}
+      .output-meta{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+      .output-biz{font-weight:700;font-size:13.5px;color:var(--white);}
+      .output-field{background:var(--vglow);color:var(--violet);font-size:11px;padding:3px 9px;border-radius:999px;font-weight:600;}
+      .output-date{color:var(--fog);font-size:11px;margin-left:auto;}
+      .msg-box{padding:16px;min-height:170px;display:flex;align-items:flex-start;}
+      .msg-text{font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.75;color:var(--bone);white-space:pre-wrap;word-break:break-word;}
+      .cursor{display:inline-block;width:2px;height:1em;background:var(--violet);margin-left:1px;animation:blink .7s step-end infinite;vertical-align:text-bottom;}
+      @keyframes blink{50%{opacity:0;}}
+      .dots{display:flex;gap:6px;align-items:center;padding:8px 0;}
+      .dots span{width:7px;height:7px;border-radius:50%;background:var(--violet);animation:dot .9s ease-in-out infinite;}
+      .dots span:nth-child(2){animation-delay:.2s;} .dots span:nth-child(3){animation-delay:.4s;}
+      @keyframes dot{0%,80%,100%{transform:scale(.6);opacity:.3;}40%{transform:scale(1);opacity:1;}}
+      .output-actions{display:flex;gap:7px;padding:0 15px 13px;border-bottom:1px solid var(--line);}
 
-      .pf-input-col  { padding: 28px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; }
-      .pf-output-col { padding: 28px; display: flex; flex-direction: column; gap: 14px; }
-      .pf-section-label { font-size: 10.5px; font-weight: 700; color: var(--violet); text-transform: uppercase; letter-spacing: .1em; }
+      /* Outcome */
+      .outcome-box{padding:14px 15px;}
+      .outcome-label{font-size:11.5px;font-weight:600;color:var(--slate);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;}
+      .outcome-btns{display:flex;gap:8px;}
+      .ob{display:flex;align-items:center;gap:6px;font-family:'Inter';font-size:13px;font-weight:600;padding:9px 15px;border-radius:8px;border:1.5px solid;cursor:pointer;transition:all .15s;}
+      .ob:disabled{opacity:.5;cursor:not-allowed;}
+      .ob-s{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.4);color:var(--green);}
+      .ob-s:hover:not(:disabled){background:rgba(16,185,129,.2);}
+      .ob-f{background:rgba(244,63,94,.1);border-color:rgba(244,63,94,.4);color:var(--red);}
+      .ob-f:hover:not(:disabled){background:rgba(244,63,94,.2);}
+      .outcome-tag{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;padding:10px 13px;border-radius:8px;}
+      .tag-s{background:rgba(16,185,129,.1);color:var(--green);}
+      .tag-f{background:rgba(244,63,94,.1);color:var(--red);}
+      .outcome-hint{color:var(--fog);font-size:11.5px;margin-top:10px;line-height:1.5;}
 
-      /* ---- Image drop zones ---- */
-      .pf-img-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-      .pf-dropzone { position: relative; border: 1.5px dashed var(--line); border-radius: 12px; height: 110px; cursor: pointer; overflow: hidden; transition: border-color .15s, background .15s; display: flex; align-items: center; justify-content: center; background: var(--card); }
-      .pf-dropzone:hover { border-color: var(--slate); }
-      .pf-dz-drag   { border-color: var(--violet); background: var(--violet-glow); }
-      .pf-dz-accent { border-color: rgba(124,58,237,.4); }
-      .pf-dz-filled { border-style: solid; border-color: var(--violet); }
-      .pf-dz-inner  { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 12px; }
-      .pf-dz-label  { font-size: 12px; font-weight: 600; color: var(--bone); }
-      .pf-dz-sub    { font-size: 10.5px; color: var(--fog); }
-      .pf-dz-preview{ width: 100%; height: 100%; object-fit: cover; display: block; }
-      .pf-dz-remove { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,.7); border: none; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
+      /* History */
+      .history-wrap{padding:26px;max-width:860px;margin:0 auto;width:100%;}
+      .history-legend{display:flex;gap:16px;margin-bottom:18px;font-size:12px;font-weight:600;}
+      .history-legend span{display:flex;align-items:center;gap:5px;}
+      .history-list{display:flex;flex-direction:column;gap:9px;}
+      .hcard{background:var(--card);border:1px solid var(--line);border-radius:11px;overflow:hidden;}
+      .hcard-success{border-left:3px solid var(--green);}
+      .hcard-failure{border-left:3px solid var(--red);}
+      .hcard-pending{border-left:3px solid var(--fog);}
+      .hcard-head{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;cursor:pointer;}
+      .hcard-head:hover{background:rgba(255,255,255,.02);}
+      .hcard-left{display:flex;align-items:center;gap:11px;}
+      .hcard-biz{font-weight:700;font-size:14px;color:var(--white);}
+      .hcard-meta{font-size:12px;color:var(--slate);margin-top:2px;}
+      .chevron{transition:transform .2s;} .rotated{transform:rotate(90deg);}
+      .hcard-body{padding:0 15px 15px;border-top:1px solid var(--line);}
+      .hcard-text{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;color:var(--bone);white-space:pre-wrap;word-break:break-word;padding:13px 0;}
+      .hcard-outcome{display:flex;flex-direction:column;gap:9px;margin-top:6px;}
+      .note-input{width:100%;background:var(--navy);border:1px solid var(--line);border-radius:8px;color:var(--bone);font-family:'Inter';font-size:13px;padding:9px 11px;resize:none;outline:none;}
+      .note-input:focus{border-color:var(--violet);}
+      .hcard-note{font-size:12.5px;color:var(--slate);font-style:italic;margin-top:8px;}
 
-      /* ---- Generating steps ---- */
-      .pf-generating-steps { display: flex; flex-direction: column; gap: 8px; }
-      .pf-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fog); }
-      .pf-step-done   { color: var(--emerald); }
-      .pf-step-active { color: var(--violet); }
-      .pf-step-dot    { width: 6px; height: 6px; border-radius: 50%; background: var(--line); display: inline-block; }
-
-      /* ---- Output card ---- */
-      .pf-output-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: 340px; color: var(--fog); text-align: center; max-width: 300px; margin: 0 auto; line-height: 1.6; font-size: 14px; }
-      .pf-empty-icon   { width: 56px; height: 56px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; display: flex; align-items: center; justify-content: center; color: var(--violet); }
-
-      .pf-output-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
-      .pf-output-meta { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-      .pf-output-biz  { font-weight: 700; font-size: 13.5px; color: var(--white); }
-      .pf-output-field{ background: var(--violet-glow); color: var(--violet); font-size: 11.5px; padding: 3px 9px; border-radius: 999px; font-weight: 600; }
-      .pf-output-date { color: var(--fog); font-size: 11.5px; margin-left: auto; }
-
-      .pf-message-box { padding: 18px; min-height: 180px; display: flex; align-items: flex-start; }
-      .pf-message-text { font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.75; color: var(--bone); white-space: pre-wrap; word-break: break-word; }
-      .pf-cursor { display: inline-block; width: 2px; height: 1em; background: var(--violet); margin-left: 1px; animation: pf-blink .7s step-end infinite; vertical-align: text-bottom; }
-      @keyframes pf-blink { 50% { opacity: 0; } }
-
-      .pf-generating-dots { display: flex; gap: 6px; align-items: center; padding: 8px 0; }
-      .pf-generating-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--violet); animation: pf-dot .9s ease-in-out infinite; }
-      .pf-generating-dots span:nth-child(2) { animation-delay: .2s; }
-      .pf-generating-dots span:nth-child(3) { animation-delay: .4s; }
-      @keyframes pf-dot { 0%,80%,100% { transform: scale(.6); opacity: .3; } 40% { transform: scale(1); opacity: 1; } }
-
-      .pf-output-actions { display: flex; gap: 8px; padding: 0 16px 14px; border-bottom: 1px solid var(--line); }
-
-      /* ---- Outcome ---- */
-      .pf-outcome-section { padding: 16px; }
-      .pf-outcome-label   { font-size: 12px; font-weight: 600; color: var(--slate); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 10px; }
-      .pf-outcome-btns    { display: flex; gap: 8px; }
-      .pf-outcome-btn     { display: flex; align-items: center; gap: 6px; font-family: 'Inter'; font-size: 13px; font-weight: 600; padding: 9px 16px; border-radius: 8px; border: 1.5px solid; cursor: pointer; transition: all .15s; }
-      .pf-outcome-btn:disabled { opacity: .5; cursor: not-allowed; }
-      .pf-ob-success { background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.4); color: var(--emerald); }
-      .pf-ob-success:hover:not(:disabled) { background: rgba(16,185,129,.2); }
-      .pf-ob-failure { background: rgba(244,63,94,.1);  border-color: rgba(244,63,94,.4);  color: var(--rose); }
-      .pf-ob-failure:hover:not(:disabled) { background: rgba(244,63,94,.2); }
-      .pf-outcome-result  { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; padding: 10px 14px; border-radius: 8px; }
-      .pf-or-s { background: rgba(16,185,129,.1); color: var(--emerald); }
-      .pf-or-f { background: rgba(244,63,94,.1);  color: var(--rose); }
-      .pf-outcome-hint { color: var(--fog); font-size: 11.5px; margin-top: 10px; line-height: 1.5; }
-
-      /* ---- History ---- */
-      .pf-history { padding: 28px; max-width: 900px; margin: 0 auto; width: 100%; }
-      .pf-history-legend { display: flex; gap: 16px; margin-bottom: 20px; }
-      .pf-legend-s,.pf-legend-f,.pf-legend-p { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
-      .pf-legend-s { color: var(--emerald); }
-      .pf-legend-f { color: var(--rose); }
-      .pf-legend-p { color: var(--slate); }
-      .pf-history-grid { display: flex; flex-direction: column; gap: 10px; }
-
-      .pf-hcard      { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; transition: border-color .15s; }
-      .pf-hcard-s    { border-left: 3px solid var(--emerald); }
-      .pf-hcard-f    { border-left: 3px solid var(--rose); }
-      .pf-hcard-p    { border-left: 3px solid var(--fog); }
-      .pf-hcard-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; cursor: pointer; }
-      .pf-hcard-head:hover { background: rgba(255,255,255,.02); }
-      .pf-hcard-info { display: flex; align-items: center; gap: 12px; }
-      .pf-hcard-biz  { font-weight: 700; font-size: 14px; color: var(--white); }
-      .pf-hcard-field{ font-size: 12px; color: var(--slate); margin-top: 2px; }
-      .pf-hcard-chevron { color: var(--fog); transition: transform .2s; }
-      .pf-rotated    { transform: rotate(90deg); }
-
-      .pf-hcard-body { padding: 0 16px 16px; border-top: 1px solid var(--line); }
-      .pf-hcard-text { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.7; color: var(--bone); white-space: pre-wrap; word-break: break-word; padding: 14px 0; }
-      .pf-hcard-outcome { margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
-      .pf-note-input { width: 100%; background: var(--navy); border: 1px solid var(--line); border-radius: 8px; color: var(--bone); font-family: 'Inter'; font-size: 13px; padding: 9px 12px; resize: none; outline: none; }
-      .pf-note-input:focus { border-color: var(--violet); }
-      .pf-hcard-result{ padding: 4px 0; display: flex; flex-direction: column; gap: 8px; }
-      .pf-hcard-note { font-size: 12.5px; color: var(--slate); font-style: italic; }
-
-      @media (max-width: 860px) {
-        .pf-auth { grid-template-columns: 1fr; }
-        .pf-auth-left { display: none; }
-        .pf-main { grid-template-columns: 1fr; }
-        .pf-input-col { border-right: none; border-bottom: 1px solid var(--line); }
-        .pf-topbar { padding: 12px 16px; }
-        .pf-stat-pill { display: none; }
-        .pf-tabbar { padding: 8px 16px 0; }
-        .pf-img-grid { grid-template-columns: 1fr 1fr 1fr; }
+      .goal-optional{font-size:9px;font-weight:500;color:var(--fog);text-transform:lowercase;letter-spacing:.03em;margin-left:6px;background:var(--card);padding:2px 7px;border-radius:999px;border:1px solid var(--line);}
+      .field-wrap-tall{align-items:flex-start;padding:10px 12px;}
+      .input-textarea{resize:none;line-height:1.6;font-size:13px;padding:0 8px;}
+      .output-goal{background:rgba(124,58,237,.12);color:#A78BFA;font-size:11px;padding:3px 9px;border-radius:999px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .hcard-goal{color:var(--fog);font-size:11px;}
+        .auth-wrap{grid-template-columns:1fr;}
+        .auth-left{display:none;}
+        .main-grid{grid-template-columns:1fr;}
+        .col-input{border-right:none;border-bottom:1px solid var(--line);}
+        .topbar{padding:11px 14px;flex-wrap:wrap;gap:8px;}
+        .stat-pill{display:none;}
+        .history-wrap{padding:18px;}
       }
     `}</style>
   );
