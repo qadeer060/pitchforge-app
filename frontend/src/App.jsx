@@ -3,7 +3,7 @@ import {
   Mail, Lock, User, Eye, EyeOff, Upload, Zap,
   CheckCircle, XCircle, Clock, ChevronDown, LogOut,
   X, Copy, Check, AlertCircle, Sparkles, RotateCcw,
-  Camera, Building2, Tag, ChevronRight, Loader2, History, Send,
+  Camera, Building2, Tag, ChevronRight, Loader2, History, Send, Layers,
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -300,6 +300,9 @@ function ToolScreen({ account, setAccount, onLogout }) {
         <button className={"main-tab"+(tab==="generate"?" main-tab-on":"")} onClick={()=>setTab("generate")} type="button">
           <Zap size={13}/> Generate
         </button>
+        <button className={"main-tab"+(tab==="bulk"?" main-tab-on":"")} onClick={()=>setTab("bulk")} type="button">
+          <Layers size={13}/> Bulk
+        </button>
         <button className={"main-tab"+(tab==="history"?" main-tab-on":"")} onClick={()=>setTab("history")} type="button">
           <History size={13}/> History <span className="badge">{messages.length}</span>
         </button>
@@ -432,6 +435,11 @@ function ToolScreen({ account, setAccount, onLogout }) {
         </div>
       )}
 
+      {/* Bulk tab */}
+      {tab === "bulk" && (
+        <BulkTab account={account} setAccount={setAccount} setMessages={setMessages} />
+      )}
+
       {/* History tab */}
       {tab === "history" && (
         <div className="history-wrap">
@@ -455,6 +463,225 @@ function ToolScreen({ account, setAccount, onLogout }) {
         </div>
       )}
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   Bulk Tab
+--------------------------------------------------------------- */
+function BulkTab({ account, setAccount, setMessages }) {
+  const [csvFile,     setCsvFile]     = useState(null);
+  const [pasteText,   setPasteText]   = useState("");
+  const [imgFile,     setImgFile]     = useState(null);
+  const [customGoal,  setCustomGoal]  = useState("");
+  const [running,     setRunning]     = useState(false);
+  const [results,     setResults]     = useState([]);
+  const [apiErr,      setApiErr]      = useState("");
+  const [done,        setDone]        = useState(false);
+  const imgRef = useRef();
+  const csvRef = useRef();
+
+  function parsePasteText(text) {
+    // Accepts: "Business Name, Field" per line or tab-separated
+    return text.split("\n")
+      .map(l => l.trim()).filter(Boolean)
+      .map(l => {
+        const parts = l.includes("\t") ? l.split("\t") : l.split(",");
+        return {
+          business_name:  (parts[0] || "").trim(),
+          business_field: (parts[1] || "").trim(),
+        };
+      }).filter(b => b.business_name && b.business_field);
+  }
+
+  async function runBulk() {
+    setApiErr(""); setResults([]); setDone(false);
+
+    let businesses = [];
+    if (csvFile) {
+      // Send CSV file to backend
+    } else if (pasteText.trim()) {
+      businesses = parsePasteText(pasteText);
+      if (!businesses.length) { setApiErr("Could not parse any businesses. Use format: Business Name, Industry (one per line)."); return; }
+    } else {
+      setApiErr("Add a CSV file or paste a list of businesses."); return;
+    }
+
+    if (businesses.length > 50) { setApiErr("Maximum 50 businesses per batch."); return; }
+
+    setRunning(true);
+    const form = new FormData();
+    if (csvFile) {
+      form.append("csv_file", csvFile);
+    } else {
+      form.append("businesses", JSON.stringify(businesses));
+    }
+    if (imgFile)     form.append("image_profile", imgFile);
+    if (customGoal.trim()) form.append("custom_goal", customGoal.trim());
+
+    try {
+      const res  = await apiFetch("/api/bulk", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) { setApiErr(data.error || "Bulk generation failed."); return; }
+      setResults(data.results);
+      setAccount(data.user);
+      setMessages(prev => [...data.results.filter(r=>r.id).map(r=>({
+        id: r.id, business_name: r.business_name, business_field: r.business_field,
+        custom_goal: r.custom_goal, generated_text: r.generated_text,
+        outcome: null, outcome_note: null, created_at: new Date().toISOString(),
+      })), ...prev]);
+      setDone(true);
+    } catch { setApiErr("Cannot reach the server."); }
+    finally   { setRunning(false); }
+  }
+
+  function downloadCSV() {
+    const header = "business_name,business_field,custom_goal,message\n";
+    const rows   = results.map(r =>
+      `"${(r.business_name||"").replace(/"/g,'""')}","${(r.business_field||"").replace(/"/g,'""')}","${(r.custom_goal||"").replace(/"/g,'""')}","${(r.generated_text||"").replace(/"/g,'""')}"`
+    ).join("\n");
+    const blob = new Blob([header+rows], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a"); a.href=url; a.download="pitchforge-bulk.csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+
+  function reset() { setCsvFile(null); setPasteText(""); setImgFile(null); setCustomGoal(""); setResults([]); setDone(false); setApiErr(""); }
+
+  return (
+    <div className="bulk-wrap">
+      <div className="bulk-grid">
+        {/* Left — inputs */}
+        <div className="bulk-input">
+          <div className="section-label">01 · BUSINESS LIST</div>
+          <p className="bulk-hint">Upload a CSV or paste a list. Max 50 businesses per batch.</p>
+
+          {/* CSV upload */}
+          <div className={"bulk-csv-zone"+(csvFile?" bulk-csv-filled":"")} onClick={()=>csvRef.current?.click()}>
+            <input ref={csvRef} type="file" accept=".csv,text/csv" hidden onChange={e=>{setCsvFile(e.target.files[0]);setPasteText("");}}/>
+            {csvFile ? (
+              <div className="bulk-csv-name">
+                <Check size={14} color="#10B981"/> {csvFile.name}
+                <button className="bulk-csv-remove" onClick={e=>{e.stopPropagation();setCsvFile(null);}} type="button"><X size={11}/></button>
+              </div>
+            ) : (
+              <div className="bulk-csv-inner">
+                <Upload size={15} color="#7C3AED"/>
+                <span>Upload CSV file</span>
+                <span className="bulk-csv-sub">Columns: business_name, business_field</span>
+              </div>
+            )}
+          </div>
+
+          <div className="bulk-divider"><span>or paste a list</span></div>
+
+          <label className="field">
+            <span className="field-label">One business per line: Name, Industry</span>
+            <div className="field-wrap field-wrap-tall">
+              <textarea
+                className="input input-textarea"
+                rows={6}
+                value={pasteText}
+                onChange={e=>{setPasteText(e.target.value);setCsvFile(null);}}
+                placeholder={"Bloom Bakery, Artisan bakery\nFitLife Studio, Fitness coaching\nZen Photography, Wedding photography\nPeak Real Estate, Real estate agency"}
+                disabled={!!csvFile}
+              />
+            </div>
+          </label>
+
+          <div className="section-label" style={{marginTop:20}}>02 · SHARED SETTINGS</div>
+
+          {/* Shared image */}
+          <div className={"bulk-img-zone"+(imgFile?" bulk-img-filled":"")} onClick={()=>imgRef.current?.click()}>
+            <input ref={imgRef} type="file" accept="image/*" hidden onChange={e=>setImgFile(e.target.files[0])}/>
+            {imgFile ? (
+              <>
+                <img src={URL.createObjectURL(imgFile)} alt="shared" className="bulk-img-preview"/>
+                <button className="dz-remove" onClick={e=>{e.stopPropagation();setImgFile(null);}} type="button"><X size={11}/></button>
+              </>
+            ) : (
+              <div className="bulk-img-inner">
+                <Camera size={15} color="#475569"/>
+                <span className="dz-label">Example profile screenshot</span>
+                <span className="dz-sub">Optional — applied to all businesses</span>
+              </div>
+            )}
+          </div>
+
+          <label className="field">
+            <span className="field-label">Your goal / offer (optional)</span>
+            <div className="field-wrap">
+              <input className="input" value={customGoal} onChange={e=>setCustomGoal(e.target.value)} placeholder="e.g. Pitch our video editing service"/>
+            </div>
+          </label>
+
+          {apiErr && <div className="banner err-banner"><AlertCircle size={13}/> {apiErr}</div>}
+
+          <button className="btn btn-primary btn-full" onClick={runBulk} disabled={running} type="button">
+            {running ? <Loader2 size={14} className="spin"/> : <Layers size={14}/>}
+            {running ? `Generating… ${results.length} done` : "Generate all messages"}
+          </button>
+        </div>
+
+        {/* Right — results */}
+        <div className="bulk-output">
+          <div className="section-label" style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>RESULTS {results.length > 0 && <span className="badge">{results.length}</span>}</span>
+            {done && (
+              <div style={{display:"flex",gap:8}}>
+                <button className="btn btn-ghost btn-sm" onClick={downloadCSV} type="button"><Copy size={12}/> Download CSV</button>
+                <button className="btn btn-ghost btn-sm" onClick={reset} type="button"><RotateCcw size={12}/> New batch</button>
+              </div>
+            )}
+          </div>
+
+          {results.length === 0 && !running && (
+            <div className="empty-state">
+              <div className="empty-icon"><Layers size={26}/></div>
+              <p>Add your business list and hit Generate — messages appear here one by one as they're written.</p>
+            </div>
+          )}
+
+          <div className="bulk-results">
+            {results.map((r, i) => (
+              <div key={i} className="bulk-result-card">
+                <div className="bulk-result-head">
+                  <span className="output-biz">{r.business_name}</span>
+                  <span className="output-field">{r.business_field}</span>
+                  {r.error && <span style={{color:"var(--red)",fontSize:11}}>{r.error}</span>}
+                </div>
+                {r.generated_text && (
+                  <pre className="bulk-result-text">{r.generated_text}</pre>
+                )}
+                {r.generated_text && (
+                  <BulkCopyBtn text={r.generated_text}/>
+                )}
+              </div>
+            ))}
+            {running && (
+              <div className="bulk-generating">
+                <Loader2 size={16} className="spin" color="#7C3AED"/>
+                <span>Writing next message…</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkCopyBtn({ text }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <button className="btn btn-ghost btn-sm bulk-copy-btn" onClick={copy} type="button">
+      {copied ? <><Check size={11}/> Copied!</> : <><Copy size={11}/> Copy</>}
+    </button>
   );
 }
 
@@ -755,7 +982,33 @@ function Styles() {
       .input-textarea{resize:none;line-height:1.6;font-size:13px;padding:0 8px;}
       .output-goal{background:rgba(124,58,237,.12);color:#A78BFA;font-size:11px;padding:3px 9px;border-radius:999px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
       .hcard-goal{color:var(--fog);font-size:11px;}
-      @media(max-width:600px){
+
+      /* Bulk */
+      .bulk-wrap{padding:26px;flex:1;}
+      .bulk-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start;}
+      .bulk-input{display:flex;flex-direction:column;gap:13px;}
+      .bulk-hint{color:var(--fog);font-size:13px;margin-top:-6px;}
+      .bulk-csv-zone{border:1.5px dashed var(--line);border-radius:11px;padding:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;background:var(--card);transition:border-color .15s;}
+      .bulk-csv-zone:hover{border-color:var(--violet);}
+      .bulk-csv-filled{border-style:solid;border-color:var(--violet);}
+      .bulk-csv-inner{display:flex;align-items:center;gap:8px;color:var(--fog);font-size:13px;}
+      .bulk-csv-sub{color:var(--fog);font-size:11px;margin-left:4px;}
+      .bulk-csv-name{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--bone);font-weight:500;}
+      .bulk-csv-remove{background:none;border:none;color:var(--fog);cursor:pointer;display:flex;padding:2px;margin-left:4px;}
+      .bulk-divider{display:flex;align-items:center;gap:10px;color:var(--fog);font-size:12px;}
+      .bulk-divider::before,.bulk-divider::after{content:"";flex:1;height:1px;background:var(--line);}
+      .bulk-img-zone{border:1.5px dashed var(--line);border-radius:11px;height:90px;cursor:pointer;display:flex;align-items:center;justify-content:center;background:var(--card);overflow:hidden;position:relative;transition:border-color .15s;}
+      .bulk-img-zone:hover{border-color:var(--slate);}
+      .bulk-img-filled{border-style:solid;border-color:var(--violet);}
+      .bulk-img-inner{display:flex;flex-direction:column;align-items:center;gap:5px;}
+      .bulk-img-preview{width:100%;height:100%;object-fit:cover;}
+      .bulk-output{display:flex;flex-direction:column;gap:13px;}
+      .bulk-results{display:flex;flex-direction:column;gap:10px;}
+      .bulk-result-card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:14px;display:flex;flex-direction:column;gap:8px;}
+      .bulk-result-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+      .bulk-result-text{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;color:var(--bone);white-space:pre-wrap;word-break:break-word;}
+      .bulk-copy-btn{align-self:flex-start;}
+      .bulk-generating{display:flex;align-items:center;gap:10px;color:var(--violet);font-size:13px;padding:14px;background:var(--card);border:1px solid var(--line);border-radius:11px;}
         .auth-wrap{grid-template-columns:1fr;}
         .auth-left{display:none;}
         .main-grid{grid-template-columns:1fr;}
@@ -766,4 +1019,5 @@ function Styles() {
       }
     `}</style>
   );
+}
 }
