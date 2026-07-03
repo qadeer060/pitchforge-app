@@ -3,7 +3,7 @@ import {
   Mail, Lock, User, Eye, EyeOff, Upload, Zap,
   CheckCircle, XCircle, Clock, ChevronDown, LogOut,
   X, Copy, Check, AlertCircle, Sparkles, RotateCcw,
-  Camera, Building2, Tag, ChevronRight, Loader2, History, Send, Layers,
+  Camera, Building2, Tag, ChevronRight, Loader2, History, Send, List,
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -301,7 +301,7 @@ function ToolScreen({ account, setAccount, onLogout }) {
           <Zap size={13}/> Generate
         </button>
         <button className={"main-tab"+(tab==="bulk"?" main-tab-on":"")} onClick={()=>setTab("bulk")} type="button">
-          <Layers size={13}/> Bulk
+          <List size={13}/> Bulk
         </button>
         <button className={"main-tab"+(tab==="history"?" main-tab-on":"")} onClick={()=>setTab("history")} type="button">
           <History size={13}/> History <span className="badge">{messages.length}</span>
@@ -618,7 +618,7 @@ function BulkTab({ account, setAccount, setMessages }) {
           {apiErr && <div className="banner err-banner"><AlertCircle size={13}/> {apiErr}</div>}
 
           <button className="btn btn-primary btn-full" onClick={runBulk} disabled={running} type="button">
-            {running ? <Loader2 size={14} className="spin"/> : <Layers size={14}/>}
+            {running ? <Loader2 size={14} className="spin"/> : <List size={14}/>}
             {running ? `Generating… ${results.length} done` : "Generate all messages"}
           </button>
         </div>
@@ -637,7 +637,7 @@ function BulkTab({ account, setAccount, setMessages }) {
 
           {results.length === 0 && !running && (
             <div className="empty-state">
-              <div className="empty-icon"><Layers size={26}/></div>
+              <div className="empty-icon"><List size={26}/></div>
               <p>Add your business list and hit Generate — messages appear here one by one as they're written.</p>
             </div>
           )}
