@@ -1009,13 +1009,16 @@ function Styles() {
       .bulk-result-text{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;color:var(--bone);white-space:pre-wrap;word-break:break-word;}
       .bulk-copy-btn{align-self:flex-start;}
       .bulk-generating{display:flex;align-items:center;gap:10px;color:var(--violet);font-size:13px;padding:14px;background:var(--card);border:1px solid var(--line);border-radius:11px;}
+       @media(max-width:600px){
         .auth-wrap{grid-template-columns:1fr;}
         .auth-left{display:none;}
         .main-grid{grid-template-columns:1fr;}
+        .bulk-grid{grid-template-columns:1fr;}
         .col-input{border-right:none;border-bottom:1px solid var(--line);}
         .topbar{padding:11px 14px;flex-wrap:wrap;gap:8px;}
         .stat-pill{display:none;}
         .history-wrap{padding:18px;}
+        .bulk-wrap{padding:18px;}
       }
     `}</style>
   );
