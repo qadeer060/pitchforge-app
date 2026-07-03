@@ -17,7 +17,7 @@ POST /api/messages/<id>/outcome — mark success or failure
 GET  /api/health
 """
 
-import os, uuid, base64, logging, requests, re
+import os, uuid, base64, logging, requests, re, json
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -411,6 +411,91 @@ def generate():
     return jsonify({"message": msg.to_dict(), "user": user.to_dict()}), 201
 
 # ---------------------------------------------------------------------------
+# Bulk generate route
+# ---------------------------------------------------------------------------
+@app.route("/api/bulk", methods=["POST"])
+@jwt_required()
+@limiter.limit("5 per hour")
+def bulk_generate():
+    user = get_user()
+    if not user:
+        return jsonify({"error": "Not found."}), 404
+
+    custom_goal = (request.form.get("custom_goal") or "").strip()
+
+    # Parse business list from JSON field or CSV file
+    businesses = []
+    raw_json = request.form.get("businesses")
+    if raw_json:
+        try:
+            businesses = json.loads(raw_json)
+        except Exception:
+            return jsonify({"error": "Invalid businesses JSON."}), 400
+
+    csv_file = request.files.get("csv_file")
+    if csv_file and not businesses:
+        import csv, io as _io
+        try:
+            content = csv_file.read().decode("utf-8-sig")
+            reader  = csv.DictReader(_io.StringIO(content))
+            for row in reader:
+                name  = (row.get("business_name") or row.get("name")     or "").strip()
+                field = (row.get("business_field") or row.get("industry") or "").strip()
+                if name and field:
+                    businesses.append({"business_name": name, "business_field": field})
+        except Exception as e:
+            return jsonify({"error": f"Could not parse CSV: {e}"}), 400
+
+    if not businesses:
+        return jsonify({"error": "No businesses provided."}), 400
+    if len(businesses) > 50:
+        return jsonify({"error": "Maximum 50 businesses per bulk request."}), 400
+
+    # Save shared screenshot(s)
+    shared_paths = []
+    for key in ["image_profile", "image_post1", "image_post2"]:
+        f = request.files.get(key)
+        if f and allowed(f.filename):
+            ext  = f.filename.rsplit(".", 1)[1].lower()
+            name = f"{uuid.uuid4().hex}.{ext}"
+            path = os.path.join(app.config["UPLOAD_FOLDER"], name)
+            f.save(path)
+            shared_paths.append(path)
+
+    outcome_context = build_outcome_context(user)
+    results = []
+
+    try:
+        for biz in businesses:
+            biz_name  = (biz.get("business_name") or "").strip()
+            biz_field = (biz.get("business_field") or "").strip()
+
+            if not biz_name or not biz_field:
+                results.append({"business_name": biz_name, "business_field": biz_field,
+                                 "generated_text": None, "error": "Missing name or field.", "id": None})
+                continue
+
+            try:
+                text = generate_with_gemini(shared_paths, biz_name, biz_field, outcome_context, custom_goal)
+            except Exception as e:
+                log.warning(f"Bulk error for {biz_name}: {e}")
+                text = demo_message(biz_name, biz_field, custom_goal)
+
+            msg = Message(user_id=user.id, business_name=biz_name, business_field=biz_field,
+                          custom_goal=custom_goal or None, generated_text=text)
+            db.session.add(msg)
+            db.session.commit()
+
+            results.append({"id": msg.id, "business_name": biz_name, "business_field": biz_field,
+                             "custom_goal": custom_goal or None, "generated_text": text, "error": None})
+    finally:
+        for path in shared_paths:
+            try: os.remove(path)
+            except: pass
+
+    return jsonify({"results": results, "total": len(results), "user": user.to_dict()}), 201
+
+# ---------------------------------------------------------------------------
 # Messages + outcome routes
 # ---------------------------------------------------------------------------
 @app.route("/api/messages", methods=["GET"])
@@ -486,5 +571,7 @@ with app.app_context():
 
 if __name__ == "__main__":
     port  = int(os.getenv("PORT", 5001))
+    debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug)
     debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
     app.run(host="0.0.0.0", port=port, debug=debug)
