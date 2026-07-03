@@ -1020,4 +1020,3 @@ function Styles() {
     `}</style>
   );
 }
-}
